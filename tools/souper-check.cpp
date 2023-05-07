@@ -15,6 +15,8 @@
 #include "llvm/Support/MemoryBuffer.h"
 #include "llvm/Support/GraphWriter.h"
 #include "llvm/Support/KnownBits.h"
+#include "llvm/Support/JSON.h"
+#include "llvm/Support/raw_ostream.h"
 
 #include "souper/Infer/ConstantSynthesis.h"
 #include "souper/Infer/Pruning.h"
@@ -22,6 +24,11 @@
 #include "souper/Parser/Parser.h"
 #include "souper/Tool/GetSolver.h"
 #include "souper/Util/DfaUtils.h"
+
+#include <sstream>
+#include <string>
+#include <vector>
+#include <fstream>
 
 using namespace llvm;
 using namespace souper;
@@ -257,7 +264,48 @@ int SolveInst(const MemoryBufferRef &MB, Solver *S) {
           for (unsigned RI = 0 ; RI < RHSs.size(); RI++) {
             llvm::outs() << "; result " << (RI + 1) << ":\n";
             ReplacementContext RC;
-            PrintReplacementRHS(llvm::outs(), RHSs[RI], RC);
+            // PrintReplacementRHS(llvm::outs(), RHSs[RI], RC);
+            // std::string SRef = RC.printInst(RHSs[RI], llvm::outs(), true);
+            std::error_code EC;
+          llvm::raw_fd_ostream OS("dataset.txt", EC, llvm::sys::fs::OF_Append);
+          OS << "Candidate: \n";
+          std::string str = RC.printInst(RHSs[RI], OS, /*printNames=*/true);
+          OS << str;
+          OS << "\nLabel: Valid\n";
+          OS << "\n";
+
+           //  std::ofstream myfile;
+           //  myfile.open("dataset.txt", std::ios_base::app);
+           //  myfile << "Candidate: \n";
+           //  myfile << SRef << "\n";
+           //  myfile << "Label: Valid\n\n";
+           //  myfile.close();
+            //append it to dataset.json file
+            /*
+             * {
+             *   oracle: [<oracle_program_comes_from_enumerative_synthesis.cpp>],
+             *   candidate: [ SRef ], // split sref in to number of lines and put it in the list
+             *   prunable: [true/false], // if we are here, then it is false
+             * }
+             * */
+
+             // split SRef in to number of lines and put it in the list
+             auto split = [](const std::string &s, char delim) {
+               std::vector<std::string> elems;
+               std::istringstream ss(s);
+               std::string item;
+               while (std::getline(ss, item, delim)) {
+                 elems.push_back(item);
+               }
+               return elems;
+             };
+
+            // std::vector<std::string> SRefLines = split(SRef, '\n');
+            // candInsts
+            // for (auto &line : SRefLines) {
+            //   candInsts.push_back(json::Value(line));
+            // }
+            
             llvm::outs() << "\n";
           }
         } else {

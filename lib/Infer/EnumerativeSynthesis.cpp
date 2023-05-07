@@ -19,7 +19,10 @@
 #include "souper/Infer/ConstantSynthesis.h"
 #include "souper/Infer/EnumerativeSynthesis.h"
 #include "souper/Infer/Pruning.h"
+#include "llvm/Support/raw_ostream.h"
+#include "llvm/Support/FileSystem.h"
 
+#include <fstream>
 #include <queue>
 #include <functional>
 #include <set>
@@ -659,7 +662,6 @@ std::error_code isConcreteCandidateSat(SynthesisContext &SC, Inst *RHSGuess, boo
   InstMapping Mapping(SC.LHS, RHSGuess);
 
   std::string Query2 = BuildQuery(SC.IC, SC.BPCs, SC.PCs, Mapping, 0, 0);
-
   EC = SC.SMTSolver->isSatisfiable(Query2, IsSat, 0, 0, SC.Timeout);
   if (EC && DebugLevel > 1) {
     llvm::errs() << "verification query failed!\n";
@@ -679,29 +681,62 @@ std::error_code synthesizeWithKLEE(SynthesisContext &SC, std::vector<Inst *> &RH
     ReplacementContext Context;
     auto S = GetReplacementLHSString(SC.BPCs, SC.PCs,
                                      SC.LHS, Context);
+    llvm::errs() << "Replacement LHS: \n";
     llvm::errs() << S << "\n";
+
+    // put S into a file
+    std::ofstream myfile;
+    myfile.open ("dataset.txt", std::ios::app);
+    myfile << "Original: \n";
+    myfile << S;
+    myfile << "\n";
+    myfile.close();
     llvm::errs() << "there are " << Guesses.size() << " guesses to check\n";
   }
 
   for (auto I : Guesses) {
     GuessIndex++;
-    if (DebugLevel > 2) {
-      llvm::errs() << "\n--------------------------------\n";
-      llvm::errs() << "guess " << GuessIndex << "\n\n";
-      ReplacementContext RC;
-      RC.printInst(I, llvm::errs(), /*printNames=*/true);
-      llvm::errs() << "\n";
-      llvm::errs() << "Cost = " << souper::cost(I, /*IgnoreDepsWithExternalUses=*/true) << "\n";
-    }
-
+//    if (DebugLevel > 2) {
+//      llvm::errs() << "\n--------------------------------\n";
+//      llvm::errs() << "guess " << GuessIndex << "\n\n";
+//      ReplacementContext RC;
+//      llvm::errs() << "CANDSTART\n";
+//      RC.printInst(I, llvm::errs(), /*printNames=*/true);
+//      llvm::errs() << "CANDEND\n";
+//      llvm::errs() << "\n";
+//      llvm::errs() << "Cost = " << souper::cost(I, /*IgnoreDepsWithExternalUses=*/true) << "\n";
+//    }
     Inst *RHS = nullptr;
     std::set<Inst *> ConstSet;
     std::map <Inst *, llvm::APInt> ResultConstMap;
+    {
+    ReplacementContext Con;
+    std::map<Inst *, llvm::APInt> ConstMap;
+    std::map<Inst *, Inst *> InstCache;
+    std::map<Block *, Block *> BlockCache;
+    RHS = getInstCopy(I, SC.IC, InstCache, BlockCache, &ConstMap,
+                      /*CloneVars=*/false);
+// llvm::errs() << "Candidate:\n";
+  //  std::string str = Con.printInst(RHS, llvm::errs(), /*printNames=*/true);
+   // llvm::errs() << str << "\n\n";
+
+  // put str into a file
+   std::error_code EC;
+  llvm::raw_fd_ostream OS("dataset.txt", EC, llvm::sys::fs::OF_Append);
+  OS << "Candidate: \n";
+  std::string str = Con.printInst(RHS, OS, /*printNames=*/true);
+  OS << str;
+  OS << "\nLabel: Invalid\n";
+  OS << "\n";
+  OS.flush();
+    }
     souper::getConstants(I, ConstSet);
     bool GuessHasConstant = !ConstSet.empty();
     if (!GuessHasConstant) {
       bool IsSAT;
-
+      // print the instruction to llvm::errs()
+      ReplacementContext Context;
+     // Context.printInst(I, llvm::errs(), /*printNames=*/true);
       EC = isConcreteCandidateSat(SC, I, IsSAT);
       if (EC) {
         if (DebugLevel > 0)
@@ -717,9 +752,13 @@ std::error_code synthesizeWithKLEE(SynthesisContext &SC, std::vector<Inst *> &RH
           llvm::errs() << "query is UNSAT, guess works\n";
         RHS = I;
       }
+      llvm::errs() << "guess has no constant(s)\n";
+      // std::string str = Context.printInst(RHS, llvm::errs(), /*printNames=*/true);
+      // llvm::errs() << "result " << str << "\n";
     } else {
       // guess has constant(s)
       ConstantSynthesis CS;
+      ReplacementContext RC;
       EC = CS.synthesize(SC.SMTSolver, SC.BPCs, SC.PCs, InstMapping (SC.LHS, I), ConstSet,
                          ResultConstMap, SC.IC, /*MaxTries=*/MaxTries, SC.Timeout,
                          /*AvoidNops=*/true);
@@ -728,6 +767,9 @@ std::error_code synthesizeWithKLEE(SynthesisContext &SC, std::vector<Inst *> &RH
       std::map<Inst *, Inst *> InstCache;
       std::map<Block *, Block *> BlockCache;
       RHS = getInstCopy(I, SC.IC, InstCache, BlockCache, &ResultConstMap, false, false);
+       // llvm::errs() << "guess has constant(s)\n";
+      // std::string str = RC.printInst(RHS, llvm::errs(), /*printNames=*/true);
+      // llvm::errs() << "result " << str << "\n";
     }
 
     assert(RHS);
@@ -845,6 +887,7 @@ EnumerativeSynthesis::synthesize(SMTLIBSolver *SMTSolver,
   if (EnableDataflowPruning) {
     DataflowPruning.init();
     PruneFuncs.push_back(DataflowPruning.getPruneFunc());
+
   }
   auto PruneCallback = MkPruneFunc(PruneFuncs);
 
